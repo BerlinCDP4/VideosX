@@ -27,11 +27,13 @@ import {
   Grid3X3,
   List,
   Download,
+  Shield,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { UploadForm } from "./upload-form"
 import { StatsModal } from "./stats-modal"
 import { TutorialModal } from "./tutorial-modal"
+import { AdminPanel } from "./admin-panel"
 
 interface MediaItem {
   id: string
@@ -71,6 +73,7 @@ export function ResponsiveMediaViewer() {
   const [showStatsModal, setShowStatsModal] = useState(false)
   const [showTutorialModal, setShowTutorialModal] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
+  const [showAdminPanel, setShowAdminPanel] = useState(false)
   const { toast } = useToast()
   const [uploaderId, setUploaderId] = useState<string>("")
 
@@ -602,6 +605,14 @@ export function ResponsiveMediaViewer() {
             <HelpCircle className="w-4 h-4 mr-3" />
             Tutorial
           </Button>
+          <Button
+            variant="ghost"
+            className="w-full justify-start text-gray-400 hover:text-red-400"
+            onClick={() => setShowAdminPanel(true)}
+          >
+            <Shield className="w-4 h-4 mr-3" />
+            Panel Admin
+          </Button>
         </div>
 
         {stats && (
@@ -842,6 +853,8 @@ export function ResponsiveMediaViewer() {
           localStorage.setItem("has-seen-tutorial", "true")
         }}
       />
+
+      <AdminPanel isOpen={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
     </div>
   )
 }
