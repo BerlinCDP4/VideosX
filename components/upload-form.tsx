@@ -1,387 +1,336 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "@/components/ui/use-toast"
-import { uploadMedia } from "@/lib/actions"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useRouter } from "next/navigation"
-import { AlertCircle } from "lucide-react"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import ThumbnailGenerator from "@/components/thumbnail-generator"
-import { useAuth } from "@/contexts/auth-context"
+import { Textarea } from "@/components/ui/textarea"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Progress } from "@/components/ui/progress"
+import { X, Upload, Link, FileVideo, ImageIcon, CheckCircle, AlertCircle } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 
-// Nuevas categorías
-const mediaCategories = ["Amateur", "Famosas", "Monica", "Estudio"]
+interface UploadFormProps {
+  onClose: () => void
+  onSuccess: () => void
+}
 
-export default function UploadForm() {
+export function UploadForm({ onClose, onSuccess }: UploadFormProps) {
   const [url, setUrl] = useState("")
-  const [type, setType] = useState("image")
   const [title, setTitle] = useState("")
-  const [category, setCategory] = useState("")
+  const [description, setDescription] = useState("")
+  const [detectedType, setDetectedType] = useState<"image" | "video" | null>(null)
+  const [isValidating, setIsValidating] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
-  const [showAlert, setShowAlert] = useState(false)
-  const [customThumbnail, setCustomThumbnail] = useState<string | null>(null)
-  const [showThumbnailGenerator, setShowThumbnailGenerator] = useState(false)
-  const [urlError, setUrlError] = useState<string | null>(null)
-  const router = useRouter()
-  const { user } = useAuth()
-  const [isLoading, setIsLoading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [validationError, setValidationError] = useState("")
+  const { toast } = useToast()
 
-  // Reset form when type changes
-  useEffect(() => {
-    setCategory("")
-    setCustomThumbnail(null)
-    setShowThumbnailGenerator(false)
-    setUrlError(null)
-  }, [type])
-
-  // Mostrar generador de miniaturas automáticamente cuando se ingresa una URL de video válida
-  useEffect(() => {
-    if (type === "video" && isValidUrl(url)) {
-      setShowThumbnailGenerator(true)
-      setUrlError(null)
-    }
-  }, [url, type])
-
-  // Validar URL con mejor manejo de errores
-  const isValidUrl = (urlString: string): boolean => {
-    if (!urlString || urlString.trim() === "") return false
-
+  // Validar URL
+  const validateUrl = (url: string): boolean => {
     try {
-      new URL(urlString)
-      return true
-    } catch (e) {
+      const urlObj = new URL(url)
+      return ["http:", "https:"].includes(urlObj.protocol)
+    } catch {
       return false
     }
   }
 
-  // Validar URL de video con mejor detección
-  const isValidVideoUrl = (urlString: string): boolean => {
-    if (!isValidUrl(urlString)) return false
+  // Detectar tipo de media
+  const detectMediaType = async (url: string): Promise<"image" | "video" | null> => {
+    try {
+      setIsValidating(true)
+      setValidationError("")
 
-    // Verificar si es una URL de YouTube
-    if (urlString.includes("youtube.com") || urlString.includes("youtu.be")) {
-      return true
+      // Primero intentar por extensión
+      const extension = url.split(".").pop()?.toLowerCase()
+      if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "tiff"].includes(extension || "")) {
+        setDetectedType("image")
+        return "image"
+      }
+      if (["mp4", "webm", "mov", "avi", "mkv", "flv", "wmv", "m4v"].includes(extension || "")) {
+        setDetectedType("video")
+        return "video"
+      }
+
+      // Intentar con HEAD request
+      const response = await fetch(url, { method: "HEAD" })
+      const contentType = response.headers.get("content-type") || ""
+
+      let type: "image" | "video" | null = null
+      if (contentType.startsWith("image/")) {
+        type = "image"
+      } else if (contentType.startsWith("video/")) {
+        type = "video"
+      }
+
+      setDetectedType(type)
+      return type
+    } catch (error) {
+      setValidationError("No se pudo verificar la URL. Asegúrate de que sea accesible.")
+      return null
+    } finally {
+      setIsValidating(false)
     }
-
-    // Verificar si es una URL directa de video
-    const videoExtensions = [".mp4", ".webm", ".ogg", ".mov", ".avi", ".mkv"]
-    const lowercaseUrl = urlString.toLowerCase()
-    return videoExtensions.some((ext) => lowercaseUrl.endsWith(ext))
   }
 
-  // Validar URL de imagen con mejor detección
-  const isValidImageUrl = (urlString: string): boolean => {
-    if (!isValidUrl(urlString)) return false
+  // Manejar cambio de URL
+  const handleUrlChange = async (newUrl: string) => {
+    setUrl(newUrl)
+    setDetectedType(null)
+    setValidationError("")
 
-    const imageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"]
-    const lowercaseUrl = urlString.toLowerCase()
-    return imageExtensions.some((ext) => lowercaseUrl.endsWith(ext))
+    if (newUrl.trim() && validateUrl(newUrl.trim())) {
+      await detectMediaType(newUrl.trim())
+    }
   }
 
+  // Manejar envío del formulario
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setUrlError(null)
 
-    // Validaciones básicas
-    if (!url || url.trim() === "") {
-      toast({
-        title: "Error",
-        description: "Por favor, introduce una URL",
-        variant: "destructive",
-      })
+    if (!url.trim()) {
+      setValidationError("Por favor ingresa una URL válida")
       return
     }
 
-    // Validar URL según el tipo
-    if (type === "video") {
-      if (!isValidVideoUrl(url)) {
-        setUrlError(
-          "La URL no parece ser un video válido. Debe ser un enlace de YouTube o terminar en .mp4, .webm, etc.",
-        )
-        return
-      }
-    } else if (type === "image") {
-      if (!isValidImageUrl(url)) {
-        setUrlError("La URL no parece ser una imagen válida. Debe terminar en .jpg, .png, .webp, etc.")
-        return
-      }
-    }
-
-    if (!category) {
-      toast({
-        title: "Error",
-        description: "Por favor, selecciona una categoría",
-        variant: "destructive",
-      })
+    if (!validateUrl(url.trim())) {
+      setValidationError("La URL no es válida")
       return
     }
 
-    // Si es un video y no tiene miniatura personalizada
-    if (type === "video" && !customThumbnail) {
-      toast({
-        title: "Error",
-        description: "Por favor, genera una miniatura para el video",
-        variant: "destructive",
-      })
+    if (!detectedType) {
+      setValidationError("No se pudo detectar si es imagen o video")
       return
     }
 
-    if (!user?.id) {
-      toast({
-        title: "Error",
-        description: "Debes iniciar sesión para subir medios",
-        variant: "destructive",
-      })
+    if (detectedType === "video" && !title.trim()) {
+      setValidationError("Los videos requieren un título")
       return
     }
 
     setIsUploading(true)
-    setIsLoading(true)
+    setUploadProgress(0)
 
     try {
-      const newMedia = await uploadMedia(
-        url,
-        type,
-        title || "Sin título",
-        category.toLowerCase(),
-        user.id,
-        customThumbnail || undefined,
-      )
+      // Simular progreso de subida
+      const progressInterval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 90) {
+            clearInterval(progressInterval)
+            return prev
+          }
+          return prev + 10
+        })
+      }, 200)
 
-      // Actualizar localStorage con el nuevo medio
-      try {
-        const savedMedia = localStorage.getItem("mediaItems")
-        const mediaItems = savedMedia ? JSON.parse(savedMedia) : []
-        localStorage.setItem("mediaItems", JSON.stringify([newMedia, ...mediaItems]))
-      } catch (storageError) {
-        console.error("Error al actualizar localStorage:", storageError)
-        // Continuar aunque falle el localStorage
+      const uploaderId = localStorage.getItem("uploader-id") || ""
+      const response = await fetch("/api/media", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-uploader-id": uploaderId,
+        },
+        body: JSON.stringify({
+          url: url.trim(),
+          type: detectedType,
+          title: detectedType === "video" ? title.trim() : title.trim() || url.split("/").pop() || "Media",
+          description: description.trim(),
+        }),
+      })
+
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Error al subir contenido")
       }
 
       toast({
-        title: "Éxito",
-        description: "Medio subido correctamente",
+        title: "¡Contenido subido!",
+        description: `${detectedType === "video" ? "Video" : "Imagen"} compartido exitosamente`,
       })
-      setUrl("")
-      setTitle("")
-      setCategory("")
-      setCustomThumbnail(null)
-      setShowThumbnailGenerator(false)
-      setShowAlert(true)
 
-      // Esperar 2 segundos antes de redirigir
-      setTimeout(() => {
-        // Redirigir a la página correspondiente después de subir
-        if (type === "image") {
-          router.push("/images")
-        } else {
-          router.push("/videos")
-        }
-      }, 2000)
+      onSuccess()
+      onClose()
     } catch (error) {
-      console.error("Error al subir medio:", error)
       toast({
-        title: "Error",
-        description: "Error al subir el medio. Por favor, intenta de nuevo con otra URL.",
+        title: "Error al subir",
+        description: error instanceof Error ? error.message : "Error desconocido",
         variant: "destructive",
       })
     } finally {
       setIsUploading(false)
-      setIsLoading(false)
+      setUploadProgress(0)
     }
   }
 
-  const handleCancel = () => {
-    router.back() // Volver a la página anterior
-  }
-
-  const handleThumbnailGenerated = (thumbnailUrl: string) => {
-    setCustomThumbnail(thumbnailUrl)
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 bg-card p-6 rounded-lg shadow-sm border border-muted">
-      {showAlert && (
-        <Alert className="bg-accent/20 border-accent text-white mb-4">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>¡Medio subido correctamente!</AlertTitle>
-          <AlertDescription>Redirigiendo a la galería...</AlertDescription>
-        </Alert>
-      )}
-
-      <Tabs defaultValue="basic" className="w-full">
-        <TabsList className="grid grid-cols-2 mb-4 bg-muted">
-          <TabsTrigger value="basic" className="data-[state=active]:bg-accent data-[state=active]:text-white">
-            Información Básica
-          </TabsTrigger>
-          <TabsTrigger value="advanced" className="data-[state=active]:bg-accent data-[state=active]:text-white">
-            Opciones Avanzadas
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="basic" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <Label htmlFor="title">Título</Label>
-              <Input
-                id="title"
-                placeholder="Introduce un título para tu medio"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full bg-muted border-muted"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="url">URL del Medio</Label>
-              <Input
-                id="url"
-                placeholder="https://ejemplo.com/tu-medio.jpg"
-                value={url}
-                onChange={(e) => {
-                  setUrl(e.target.value)
-                  setUrlError(null)
-                }}
-                className={`w-full bg-muted border-muted ${urlError ? "border-red-500" : ""}`}
-              />
-              {urlError && <p className="text-red-500 text-sm mt-1">{urlError}</p>}
-            </div>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md bg-gray-900/95 border-green-500/30 shadow-2xl">
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-xl font-bold text-green-400 flex items-center gap-2">
+              <Upload className="w-5 h-5" />
+              Subir Contenido
+            </CardTitle>
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
+              <X className="w-4 h-4" />
+            </Button>
           </div>
+        </CardHeader>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <CardContent className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* URL Input */}
             <div className="space-y-2">
-              <Label>Tipo de Medio</Label>
-              <RadioGroup
-                defaultValue="image"
-                value={type}
-                onValueChange={(value) => {
-                  setType(value)
-                  setCategory("") // Reset category when type changes
-                }}
-                className="flex flex-wrap gap-4"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="image" id="image" className="border-accent text-accent" />
-                  <Label htmlFor="image">Imagen</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="video" id="video" className="border-accent text-accent" />
-                  <Label htmlFor="video">Video</Label>
-                </div>
-              </RadioGroup>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="category">Categoría</Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger id="category" className="bg-muted border-muted">
-                  <SelectValue placeholder="Selecciona una categoría" />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-muted">
-                  {mediaCategories.map((cat) => (
-                    <SelectItem key={cat} value={cat.toLowerCase()}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {type === "video" && url && (
-            <div className="mt-6">
-              <div className="flex justify-between items-center mb-4">
-                <Label>Miniatura del Video</Label>
-              </div>
-
-              {/* Generador de miniaturas oculto pero funcional */}
-              <ThumbnailGenerator
-                videoUrl={url}
-                onThumbnailGenerated={handleThumbnailGenerated}
-                autoGenerate={true}
-                hidden={true}
-              />
-
-              {customThumbnail ? (
-                <div className="relative aspect-video w-full max-w-md mx-auto border border-muted rounded-md overflow-hidden">
-                  <img
-                    src={customThumbnail || "/placeholder.svg"}
-                    alt="Miniatura personalizada"
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute bottom-2 right-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        // Generar nueva miniatura automáticamente
-                        const generator = new ThumbnailGenerator({
-                          videoUrl: url,
-                          onThumbnailGenerated: handleThumbnailGenerated,
-                          autoGenerate: true,
-                          hidden: true,
-                        })
-                      }}
-                    >
-                      Regenerar
-                    </Button>
+              <Label htmlFor="url" className="text-sm font-medium text-gray-300">
+                URL del contenido *
+              </Label>
+              <div className="relative">
+                <Link className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  id="url"
+                  type="url"
+                  placeholder="https://ejemplo.com/imagen.jpg"
+                  value={url}
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  className="pl-10 bg-gray-800/50 border-gray-600 text-white placeholder-gray-400 focus:border-green-400"
+                  disabled={isUploading}
+                />
+                {isValidating && (
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-green-400 border-t-transparent"></div>
                   </div>
-                </div>
-              ) : (
-                <div className="bg-muted p-4 rounded-md text-center">
-                  <p className="text-muted-foreground mb-2">Generando miniatura automáticamente...</p>
-                  <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto"></div>
-                </div>
-              )}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="advanced" className="space-y-6">
-          <div className="text-sm text-muted-foreground">
-            <p className="mb-4">Opciones avanzadas para tu medio:</p>
-
-            <div className="space-y-4">
-              <div>
-                <p className="font-medium mb-2">Formatos de URL:</p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Las URLs de imágenes directas deben terminar con extensiones como .jpg, .png, .webp</li>
-                  <li>Las URLs de videos directos deben terminar con extensiones como .mp4, .webm</li>
-                  <li>Para videos de YouTube, usa el enlace completo (ej: https://www.youtube.com/watch?v=VIDEO_ID)</li>
-                  <li>Para videos de catbox.moe, usa el enlace directo al archivo .mp4</li>
-                </ul>
-              </div>
-
-              <div>
-                <p className="font-medium mb-2">Propiedad del contenido:</p>
-                <p>Solo tú podrás eliminar el contenido que subas. Otros usuarios no podrán eliminar tus medios.</p>
+                )}
               </div>
             </div>
+
+            {/* Tipo detectado */}
+            {detectedType && (
+              <div className="flex items-center gap-2 p-3 bg-green-900/20 border border-green-500/30 rounded-lg">
+                {detectedType === "video" ? (
+                  <FileVideo className="w-5 h-5 text-orange-400" />
+                ) : (
+                  <ImageIcon className="w-5 h-5 text-purple-400" />
+                )}
+                <span className="text-sm text-green-400 font-medium">
+                  {detectedType === "video" ? "Video detectado" : "Imagen detectada"}
+                </span>
+                <CheckCircle className="w-4 h-4 text-green-400 ml-auto" />
+              </div>
+            )}
+
+            {/* Título */}
+            {detectedType === "video" && (
+              <div className="space-y-2">
+                <Label htmlFor="title" className="text-sm font-medium text-gray-300">
+                  Título del video *
+                </Label>
+                <Input
+                  id="title"
+                  type="text"
+                  placeholder="Describe tu video..."
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="bg-gray-800/50 border-gray-600 text-white placeholder-gray-400 focus:border-green-400"
+                  disabled={isUploading}
+                  maxLength={100}
+                />
+              </div>
+            )}
+
+            {detectedType === "image" && (
+              <div className="space-y-2">
+                <Label htmlFor="title" className="text-sm font-medium text-gray-300">
+                  Título (opcional)
+                </Label>
+                <Input
+                  id="title"
+                  type="text"
+                  placeholder="Título de la imagen..."
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="bg-gray-800/50 border-gray-600 text-white placeholder-gray-400 focus:border-green-400"
+                  disabled={isUploading}
+                  maxLength={100}
+                />
+              </div>
+            )}
+
+            {/* Descripción */}
+            <div className="space-y-2">
+              <Label htmlFor="description" className="text-sm font-medium text-gray-300">
+                Descripción (opcional)
+              </Label>
+              <Textarea
+                id="description"
+                placeholder="Agrega una descripción..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="bg-gray-800/50 border-gray-600 text-white placeholder-gray-400 focus:border-green-400 resize-none"
+                disabled={isUploading}
+                rows={3}
+                maxLength={500}
+              />
+              <div className="text-xs text-gray-500 text-right">{description.length}/500</div>
+            </div>
+
+            {/* Error */}
+            {validationError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{validationError}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Progress */}
+            {isUploading && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">Subiendo contenido...</span>
+                  <span className="text-green-400">{uploadProgress}%</span>
+                </div>
+                <Progress value={uploadProgress} className="h-2" />
+              </div>
+            )}
+
+            {/* Botones */}
+            <div className="flex gap-3 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={isUploading}
+                className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-800"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={!detectedType || isUploading || (detectedType === "video" && !title.trim())}
+                className="flex-1 bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-700 hover:to-emerald-600 text-black font-semibold"
+              >
+                {isUploading ? "Subiendo..." : "Subir"}
+              </Button>
+            </div>
+          </form>
+
+          {/* Ayuda */}
+          <div className="pt-4 border-t border-gray-700">
+            <p className="text-xs text-gray-500 mb-2">💡 Consejos:</p>
+            <ul className="text-xs text-gray-500 space-y-1">
+              <li>• Usa URLs directas a archivos (terminan en .jpg, .mp4, etc.)</li>
+              <li>• Asegúrate de que la URL sea pública y accesible</li>
+              <li>• Los videos requieren un título descriptivo</li>
+            </ul>
           </div>
-        </TabsContent>
-      </Tabs>
-
-      <div className="flex justify-between gap-4">
-        <Button
-          type="button"
-          variant="outline"
-          className="w-1/3 border-muted hover:bg-muted hover:text-accent"
-          onClick={handleCancel}
-        >
-          Cancelar
-        </Button>
-        <Button type="submit" className="w-2/3 bg-accent hover:bg-accent/90 text-white" disabled={isLoading}>
-          {isLoading ? "Subiendo..." : "Subir Medio"}
-        </Button>
-      </div>
-    </form>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
